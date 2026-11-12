@@ -1,0 +1,24 @@
+name: DigiHRMobile
+options:
+  bundleIdPrefix: om.gov.ptlc
+  deploymentTarget:
+    iOS: "15.0"
+targets:
+  DigiHRMobile:
+    type: application
+    platform: iOS
+    sources:
+      - path: DigiHRMobile
+        excludes:
+          - Info.plist
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: om.gov.ptlc.digihrmobile
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: DigiHRMobile/Info.plist
+        SWIFT_VERSION: "5.0"
+        TARGETED_DEVICE_FAMILY: "1"
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGNING_ALLOWED: NO
+        CODE_SIGNING_REQUIRED: NO
+        CODE_SIGN_IDENTITY: ""
