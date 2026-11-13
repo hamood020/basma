@@ -145,6 +145,11 @@ final class WebStore: NSObject, ObservableObject, WKNavigationDelegate, WKUIDele
         webView.isOpaque = false
         webView.backgroundColor = .systemBackground
         webView.scrollView.backgroundColor = .systemBackground
+        // Keep native layout LTR so the web page controls its own RTL via its `dir`.
+        // Without this, the app's RTL environment flips the scroll view's origin and the
+        // page opens scrolled to the wrong edge, hiding the left side (e.g. the menu icon).
+        webView.semanticContentAttribute = .forceLeftToRight
+        webView.scrollView.semanticContentAttribute = .forceLeftToRight
 
         refreshControl.addTarget(self, action: #selector(pullToRefresh), for: .valueChanged)
         webView.scrollView.refreshControl = refreshControl
@@ -467,8 +472,16 @@ final class WebStore: NSObject, ObservableObject, WKNavigationDelegate, WKUIDele
 
 struct WebContainer: UIViewRepresentable {
     let webView: WKWebView
-    func makeUIView(context: Context) -> WKWebView { webView }
-    func updateUIView(_ uiView: WKWebView, context: Context) {}
+    func makeUIView(context: Context) -> WKWebView {
+        webView.semanticContentAttribute = .forceLeftToRight
+        webView.scrollView.semanticContentAttribute = .forceLeftToRight
+        return webView
+    }
+    func updateUIView(_ uiView: WKWebView, context: Context) {
+        // Re-assert LTR in case the surrounding RTL environment tries to flip it.
+        uiView.semanticContentAttribute = .forceLeftToRight
+        uiView.scrollView.semanticContentAttribute = .forceLeftToRight
+    }
 }
 
 // MARK: - System page
