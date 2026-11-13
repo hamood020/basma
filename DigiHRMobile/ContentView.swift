@@ -104,6 +104,10 @@ final class WebStore: NSObject, ObservableObject, WKNavigationDelegate, WKUIDele
     @Published var canGoBack = false
     @Published var errorMessage: String?
     @Published var savedUsername: String? = CredentialStore.load()?.user
+    @Published var pageZoom: Double = {
+        let saved = UserDefaults.standard.object(forKey: "digiHRZoom") as? Double ?? 0.85
+        return min(1.3, max(0.6, saved))
+    }()
 
     private var currentMode: PunchMode = .none
     private var observers: [NSKeyValueObservation] = []
@@ -125,6 +129,9 @@ final class WebStore: NSObject, ObservableObject, WKNavigationDelegate, WKUIDele
         controller.addUserScript(
             WKUserScript(source: CredentialScript.source, injectionTime: .atDocumentEnd, forMainFrameOnly: true)
         )
+        controller.addUserScript(
+            WKUserScript(source: Self.viewportScript, injectionTime: .atDocumentEnd, forMainFrameOnly: false)
+        )
         let config = WKWebViewConfiguration()
         config.userContentController = controller
         config.allowsInlineMediaPlayback = true
@@ -140,6 +147,9 @@ final class WebStore: NSObject, ObservableObject, WKNavigationDelegate, WKUIDele
         webView.isOpaque = false
         webView.backgroundColor = .systemBackground
         webView.scrollView.backgroundColor = .systemBackground
+        webView.scrollView.bounces = true
+        webView.scrollView.alwaysBounceVertical = true
+        webView.scrollView.contentInsetAdjustmentBehavior = .never
 
         refreshControl.addTarget(self, action: #selector(pullToRefresh), for: .valueChanged)
         webView.scrollView.refreshControl = refreshControl
@@ -367,7 +377,44 @@ final class WebStore: NSObject, ObservableObject, WKNavigationDelegate, WKUIDele
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         apply(mode: currentMode)
+        applyZoom()
     }
+
+    // MARK: Page text size (zoom)
+
+    func stepZoom(_ delta: Double) {
+        setZoom(((pageZoom * 100).rounded() / 100) + delta)
+    }
+
+    func setZoom(_ value: Double) {
+        pageZoom = min(1.3, max(0.6, (value * 100).rounded() / 100))
+        UserDefaults.standard.set(pageZoom, forKey: "digiHRZoom")
+        applyZoom()
+    }
+
+    private func applyZoom() {
+        webView.evaluateJavaScript(
+            "document.documentElement.style.setProperty('zoom','\(pageZoom)');",
+            completionHandler: nil
+        )
+    }
+
+    static let viewportScript = """
+    (function () {
+      function fix() {
+        var m = document.querySelector('meta[name=viewport]');
+        if (!m) {
+          m = document.createElement('meta');
+          m.setAttribute('name', 'viewport');
+          (document.head || document.documentElement).appendChild(m);
+        }
+        m.setAttribute('content',
+          'width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=6, user-scalable=yes');
+      }
+      fix();
+      document.addEventListener('DOMContentLoaded', fix);
+    })();
+    """
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
         handle(error)
@@ -448,19 +495,24 @@ struct WebContainer: UIViewRepresentable {
 struct SystemPage: View {
     @EnvironmentObject private var state: AppState
     @StateObject private var web = WebStore()
-    @State private var showCredentialMenu = false
+    @State private var showFontMenu = false
+    @State private var showMoreMenu = false
 
     var body: some View {
         VStack(spacing: 0) {
             header
-                .confirmationDialog(
-                    web.savedUsername.map { "كلمة مرور ويندوز محفوظة للمستخدم: \($0)" }
-                        ?? "لا توجد كلمة مرور محفوظة. ستظهر لك خيارات الحفظ عند تسجيل الدخول بحساب ويندوز.",
-                    isPresented: $showCredentialMenu,
-                    titleVisibility: .visible
-                ) {
-                    if web.savedUsername != nil {
-                        Button("حذف كلمة المرور المحفوظة", role: .destructive) { web.forgetSavedCredential() }
+                .confirmationDialog("حجم الخط", isPresented: $showFontMenu, titleVisibility: .visible) {
+                    Button("تصغير الخط") { web.stepZoom(-0.1) }
+                    Button("تكبير الخط") { web.stepZoom(0.1) }
+                    Button("الحجم الافتراضي") { web.setZoom(0.85) }
+                    Button("إغلاق", role: .cancel) {}
+                }
+                .confirmationDialog("خيارات", isPresented: $showMoreMenu, titleVisibility: .visible) {
+                    Button("الصفحة الرئيسية") { web.goHome() }
+                    if let user = web.savedUsername {
+                        Button("حذف كلمة المرور المحفوظة (\(user))", role: .destructive) {
+                            web.forgetSavedCredential()
+                        }
                     }
                     Button("إغلاق", role: .cancel) {}
                 }
@@ -496,12 +548,10 @@ struct SystemPage: View {
                         .opacity(0.8)
                 }
                 Spacer()
-                headerButton(web.savedUsername == nil ? "key" : "key.fill", label: "كلمة المرور المحفوظة") {
-                    showCredentialMenu = true
-                }
                 headerButton("chevron.backward", label: "رجوع", enabled: web.canGoBack) { web.goBack() }
-                headerButton("house.fill", label: "الصفحة الرئيسية") { web.goHome() }
                 headerButton("arrow.clockwise", label: "تحديث الصفحة") { web.reload() }
+                headerButton("textformat.size", label: "حجم الخط") { showFontMenu = true }
+                headerButton("ellipsis", label: "المزيد") { showMoreMenu = true }
             }
 
             HStack(spacing: 10) {
