@@ -130,9 +130,6 @@ final class WebStore: NSObject, ObservableObject, WKNavigationDelegate, WKUIDele
         controller.addUserScript(
             WKUserScript(source: CredentialScript.source, injectionTime: .atDocumentEnd, forMainFrameOnly: true)
         )
-        controller.addUserScript(
-            WKUserScript(source: Self.viewportScript, injectionTime: .atDocumentEnd, forMainFrameOnly: false)
-        )
         let config = WKWebViewConfiguration()
         config.userContentController = controller
         config.allowsInlineMediaPlayback = true
@@ -148,9 +145,6 @@ final class WebStore: NSObject, ObservableObject, WKNavigationDelegate, WKUIDele
         webView.isOpaque = false
         webView.backgroundColor = .systemBackground
         webView.scrollView.backgroundColor = .systemBackground
-        webView.scrollView.bounces = true
-        webView.scrollView.alwaysBounceVertical = true
-        webView.scrollView.contentInsetAdjustmentBehavior = .never
 
         refreshControl.addTarget(self, action: #selector(pullToRefresh), for: .valueChanged)
         webView.scrollView.refreshControl = refreshControl
@@ -402,23 +396,6 @@ final class WebStore: NSObject, ObservableObject, WKNavigationDelegate, WKUIDele
             completionHandler: nil
         )
     }
-
-    static let viewportScript = """
-    (function () {
-      function fix() {
-        var m = document.querySelector('meta[name=viewport]');
-        if (!m) {
-          m = document.createElement('meta');
-          m.setAttribute('name', 'viewport');
-          (document.head || document.documentElement).appendChild(m);
-        }
-        m.setAttribute('content',
-          'width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=6, user-scalable=yes');
-      }
-      fix();
-      document.addEventListener('DOMContentLoaded', fix);
-    })();
-    """
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
         handle(error)
