@@ -130,6 +130,9 @@ final class WebStore: NSObject, ObservableObject, WKNavigationDelegate, WKUIDele
         controller.addUserScript(
             WKUserScript(source: CredentialScript.source, injectionTime: .atDocumentEnd, forMainFrameOnly: true)
         )
+        controller.addUserScript(
+            WKUserScript(source: Self.layoutFixScript, injectionTime: .atDocumentStart, forMainFrameOnly: true)
+        )
         let config = WKWebViewConfiguration()
         config.userContentController = controller
         config.allowsInlineMediaPlayback = true
@@ -401,6 +404,35 @@ final class WebStore: NSObject, ObservableObject, WKNavigationDelegate, WKUIDele
             completionHandler: nil
         )
     }
+
+    /// Fixes a bug in the portal's Arabic (RTL) stylesheet: the compacted header gets
+    /// `width: calc(100% - 80px)` but `margin-right: 110px` (aqua-lavender theme), which pushes it
+    /// 30px past the left screen edge and hides the menu (☰) button. Pin it between the left
+    /// edge and the side rail instead. Safari hides the bug by shrinking the whole page to fit.
+    static let layoutFixScript = """
+    (function () {
+      var css =
+        '.lang-rtl .header.compacted.compacted.compacted{' +
+          'margin-left:0!important;margin-right:0!important;' +
+          'left:0!important;right:80px!important;width:auto!important}' +
+        '.aqua-lavender.lang-rtl .header.compacted.compacted.compacted{right:90px!important}';
+      function ensure() {
+        if (document.getElementById('__basma_layout_fix')) return;
+        var s = document.createElement('style');
+        s.id = '__basma_layout_fix';
+        s.textContent = css;
+        (document.head || document.documentElement).appendChild(s);
+      }
+      ensure();
+      document.addEventListener('DOMContentLoaded', ensure);
+      window.addEventListener('load', ensure);
+      try {
+        new MutationObserver(function () {
+          if (!document.getElementById('__basma_layout_fix')) ensure();
+        }).observe(document.documentElement, { childList: true, subtree: false });
+      } catch (e) {}
+    })();
+    """
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
         handle(error)
