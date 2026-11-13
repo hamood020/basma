@@ -104,9 +104,10 @@ final class WebStore: NSObject, ObservableObject, WKNavigationDelegate, WKUIDele
     @Published var canGoBack = false
     @Published var errorMessage: String?
     @Published var savedUsername: String? = CredentialStore.load()?.user
+    // User text-size preference, applied on top of automatic fit-to-width.
     @Published var pageZoom: Double = {
-        let saved = UserDefaults.standard.object(forKey: "digiHRZoom") as? Double ?? 0.85
-        return min(1.3, max(0.6, saved))
+        let saved = UserDefaults.standard.object(forKey: "digiHRScale") as? Double ?? 1.0
+        return min(1.4, max(0.7, saved))
     }()
 
     private var currentMode: PunchMode = .none
@@ -131,6 +132,9 @@ final class WebStore: NSObject, ObservableObject, WKNavigationDelegate, WKUIDele
         )
         controller.addUserScript(
             WKUserScript(source: Self.viewportScript, injectionTime: .atDocumentEnd, forMainFrameOnly: false)
+        )
+        controller.addUserScript(
+            WKUserScript(source: Self.fitScript, injectionTime: .atDocumentStart, forMainFrameOnly: true)
         )
         let config = WKWebViewConfiguration()
         config.userContentController = controller
@@ -378,23 +382,29 @@ final class WebStore: NSObject, ObservableObject, WKNavigationDelegate, WKUIDele
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         apply(mode: currentMode)
         applyZoom()
+        // The portal is a single-page app that renders after load; re-fit a few times.
+        for delay in [0.3, 1.0, 2.2] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                self?.webView.evaluateJavaScript("window.__digiHRFit && window.__digiHRFit();", completionHandler: nil)
+            }
+        }
     }
 
-    // MARK: Page text size (zoom)
+    // MARK: Page text size (applied on top of automatic fit-to-width)
 
     func stepZoom(_ delta: Double) {
         setZoom(((pageZoom * 100).rounded() / 100) + delta)
     }
 
     func setZoom(_ value: Double) {
-        pageZoom = min(1.3, max(0.6, (value * 100).rounded() / 100))
-        UserDefaults.standard.set(pageZoom, forKey: "digiHRZoom")
+        pageZoom = min(1.4, max(0.7, (value * 100).rounded() / 100))
+        UserDefaults.standard.set(pageZoom, forKey: "digiHRScale")
         applyZoom()
     }
 
     private func applyZoom() {
         webView.evaluateJavaScript(
-            "document.documentElement.style.setProperty('zoom','\(pageZoom)');",
+            "window.__digiHRApplyScale && window.__digiHRApplyScale(\(pageZoom));",
             completionHandler: nil
         )
     }
@@ -413,6 +423,45 @@ final class WebStore: NSObject, ObservableObject, WKNavigationDelegate, WKUIDele
       }
       fix();
       document.addEventListener('DOMContentLoaded', fix);
+    })();
+    """
+
+    // Shrinks the whole page so its width fits the screen (no horizontal cut-off / shift),
+    // then applies the user's chosen text size on top. Re-runs on resize and DOM changes.
+    static let fitScript = """
+    (function () {
+      if (window.__digiHRFitInstalled) return;
+      window.__digiHRFitInstalled = true;
+      window.__digiHRUserScale = 1;
+      var raf = 0;
+      function fit() {
+        try {
+          var el = document.documentElement;
+          if (!el || !document.body) return;
+          el.style.setProperty('zoom', '1', 'important');
+          var sw = Math.max(el.scrollWidth, document.body.scrollWidth);
+          var iw = window.innerWidth || el.clientWidth;
+          var f = (sw > iw + 1) ? (iw / sw) : 1;
+          var z = f * (window.__digiHRUserScale || 1);
+          el.style.setProperty('zoom', String(z), 'important');
+          try { document.body.style.setProperty('overflow-x', 'hidden', 'important'); } catch (e) {}
+          window.scrollTo(0, window.scrollY);
+        } catch (e) {}
+      }
+      function schedule() {
+        if (raf) cancelAnimationFrame(raf);
+        raf = requestAnimationFrame(function () { raf = 0; fit(); });
+      }
+      window.__digiHRFit = fit;
+      window.__digiHRApplyScale = function (s) { window.__digiHRUserScale = s; fit(); };
+      window.addEventListener('resize', schedule);
+      window.addEventListener('orientationchange', function () { setTimeout(fit, 300); });
+      document.addEventListener('DOMContentLoaded', function () {
+        fit();
+        try {
+          new MutationObserver(schedule).observe(document.documentElement, { childList: true, subtree: true });
+        } catch (e) {}
+      });
     })();
     """
 
@@ -504,7 +553,7 @@ struct SystemPage: View {
                 .confirmationDialog("حجم الخط", isPresented: $showFontMenu, titleVisibility: .visible) {
                     Button("تصغير الخط") { web.stepZoom(-0.1) }
                     Button("تكبير الخط") { web.stepZoom(0.1) }
-                    Button("الحجم الافتراضي") { web.setZoom(0.85) }
+                    Button("الحجم الافتراضي") { web.setZoom(1.0) }
                     Button("إغلاق", role: .cancel) {}
                 }
                 .confirmationDialog("خيارات", isPresented: $showMoreMenu, titleVisibility: .visible) {
