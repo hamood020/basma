@@ -133,9 +133,6 @@ final class WebStore: NSObject, ObservableObject, WKNavigationDelegate, WKUIDele
         controller.addUserScript(
             WKUserScript(source: Self.viewportScript, injectionTime: .atDocumentEnd, forMainFrameOnly: false)
         )
-        controller.addUserScript(
-            WKUserScript(source: Self.fitScript, injectionTime: .atDocumentStart, forMainFrameOnly: true)
-        )
         let config = WKWebViewConfiguration()
         config.userContentController = controller
         config.allowsInlineMediaPlayback = true
@@ -381,16 +378,10 @@ final class WebStore: NSObject, ObservableObject, WKNavigationDelegate, WKUIDele
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         apply(mode: currentMode)
-        applyZoom()
-        // The portal is a single-page app that renders after load; re-fit a few times.
-        for delay in [0.3, 1.0, 2.2] {
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-                self?.webView.evaluateJavaScript("window.__digiHRFit && window.__digiHRFit();", completionHandler: nil)
-            }
-        }
+        if pageZoom != 1.0 { applyZoom() }
     }
 
-    // MARK: Page text size (applied on top of automatic fit-to-width)
+    // MARK: Page text size — renders natively (like Safari) at 1.0; only shrinks/grows text on demand.
 
     func stepZoom(_ delta: Double) {
         setZoom(((pageZoom * 100).rounded() / 100) + delta)
@@ -403,8 +394,11 @@ final class WebStore: NSObject, ObservableObject, WKNavigationDelegate, WKUIDele
     }
 
     private func applyZoom() {
+        // text-size-adjust scales text without changing page layout width, so it never
+        // shifts the page sideways the way a full CSS zoom can on this RTL portal.
+        let percent = Int((pageZoom * 100).rounded())
         webView.evaluateJavaScript(
-            "window.__digiHRApplyScale && window.__digiHRApplyScale(\(pageZoom));",
+            "document.documentElement.style.setProperty('-webkit-text-size-adjust','\(percent)%','important');",
             completionHandler: nil
         )
     }
@@ -423,75 +417,6 @@ final class WebStore: NSObject, ObservableObject, WKNavigationDelegate, WKUIDele
       }
       fix();
       document.addEventListener('DOMContentLoaded', fix);
-    })();
-    """
-
-    // Shrinks the whole page so its FULL width fits the screen — including fixed toolbars and
-    // side rails that scrollWidth misses — so no button (e.g. the portal's menu icon) is cut off.
-    // The user's chosen text size is applied on top. Re-runs on resize, rotation and DOM changes.
-    static let fitScript = """
-    (function () {
-      if (window.__digiHRFitInstalled) return;
-      window.__digiHRFitInstalled = true;
-      window.__digiHRUserScale = 1;
-      var raf = 0, lastRun = 0;
-
-      function contentWidth(iw) {
-        var el = document.documentElement, b = document.body;
-        var w = Math.max(el.scrollWidth, b.scrollWidth, b.offsetWidth, iw);
-        try {
-          var nodes = b.getElementsByTagName('*');
-          var n = Math.min(nodes.length, 5000);
-          var sx = window.scrollX || 0;
-          for (var i = 0; i < n; i++) {
-            var e = nodes[i];
-            var r = e.getBoundingClientRect();
-            if (r.width <= 0 || r.height <= 0) continue;
-            var cs = window.getComputedStyle(e);
-            if (cs.visibility === 'hidden' || cs.display === 'none' || cs.opacity === '0') continue;
-            var right = r.right + (cs.position === 'fixed' ? 0 : sx);
-            if (right > w) w = right;
-          }
-        } catch (e) {}
-        return w;
-      }
-
-      function fit() {
-        try {
-          var el = document.documentElement;
-          if (!el || !document.body) return;
-          lastRun = Date.now();
-          el.style.setProperty('zoom', '1', 'important');
-          var iw = window.innerWidth || el.clientWidth;
-          var cw = contentWidth(iw);
-          var f = (cw > iw + 1) ? (iw / cw) : 1;
-          if (f < 0.4) f = 0.4;
-          var z = f * (window.__digiHRUserScale || 1);
-          el.style.setProperty('zoom', String(z), 'important');
-          window.scrollTo(0, window.scrollY);
-        } catch (e) {}
-      }
-
-      function schedule() {
-        if (raf) return;
-        var wait = Math.max(0, 400 - (Date.now() - lastRun));
-        raf = 1;
-        setTimeout(function () {
-          raf = 0;
-          requestAnimationFrame(fit);
-        }, wait);
-      }
-
-      window.__digiHRFit = fit;
-      window.__digiHRApplyScale = function (s) { window.__digiHRUserScale = s; fit(); };
-      window.addEventListener('resize', schedule);
-      window.addEventListener('orientationchange', function () { setTimeout(fit, 350); });
-      document.addEventListener('DOMContentLoaded', function () {
-        fit();
-        try {
-          new MutationObserver(schedule).observe(document.documentElement, { childList: true, subtree: true, attributes: true });
-        } catch (e) {}
-      });
     })();
     """
 
