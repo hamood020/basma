@@ -426,40 +426,70 @@ final class WebStore: NSObject, ObservableObject, WKNavigationDelegate, WKUIDele
     })();
     """
 
-    // Shrinks the whole page so its width fits the screen (no horizontal cut-off / shift),
-    // then applies the user's chosen text size on top. Re-runs on resize and DOM changes.
+    // Shrinks the whole page so its FULL width fits the screen — including fixed toolbars and
+    // side rails that scrollWidth misses — so no button (e.g. the portal's menu icon) is cut off.
+    // The user's chosen text size is applied on top. Re-runs on resize, rotation and DOM changes.
     static let fitScript = """
     (function () {
       if (window.__digiHRFitInstalled) return;
       window.__digiHRFitInstalled = true;
       window.__digiHRUserScale = 1;
-      var raf = 0;
+      var raf = 0, lastRun = 0;
+
+      function contentWidth(iw) {
+        var el = document.documentElement, b = document.body;
+        var w = Math.max(el.scrollWidth, b.scrollWidth, b.offsetWidth, iw);
+        try {
+          var nodes = b.getElementsByTagName('*');
+          var n = Math.min(nodes.length, 5000);
+          var sx = window.scrollX || 0;
+          for (var i = 0; i < n; i++) {
+            var e = nodes[i];
+            var r = e.getBoundingClientRect();
+            if (r.width <= 0 || r.height <= 0) continue;
+            var cs = window.getComputedStyle(e);
+            if (cs.visibility === 'hidden' || cs.display === 'none' || cs.opacity === '0') continue;
+            var right = r.right + (cs.position === 'fixed' ? 0 : sx);
+            if (right > w) w = right;
+          }
+        } catch (e) {}
+        return w;
+      }
+
       function fit() {
         try {
           var el = document.documentElement;
           if (!el || !document.body) return;
+          lastRun = Date.now();
           el.style.setProperty('zoom', '1', 'important');
-          var sw = Math.max(el.scrollWidth, document.body.scrollWidth);
           var iw = window.innerWidth || el.clientWidth;
-          var f = (sw > iw + 1) ? (iw / sw) : 1;
+          var cw = contentWidth(iw);
+          var f = (cw > iw + 1) ? (iw / cw) : 1;
+          if (f < 0.4) f = 0.4;
           var z = f * (window.__digiHRUserScale || 1);
           el.style.setProperty('zoom', String(z), 'important');
-          try { document.body.style.setProperty('overflow-x', 'hidden', 'important'); } catch (e) {}
           window.scrollTo(0, window.scrollY);
         } catch (e) {}
       }
+
       function schedule() {
-        if (raf) cancelAnimationFrame(raf);
-        raf = requestAnimationFrame(function () { raf = 0; fit(); });
+        if (raf) return;
+        var wait = Math.max(0, 400 - (Date.now() - lastRun));
+        raf = 1;
+        setTimeout(function () {
+          raf = 0;
+          requestAnimationFrame(fit);
+        }, wait);
       }
+
       window.__digiHRFit = fit;
       window.__digiHRApplyScale = function (s) { window.__digiHRUserScale = s; fit(); };
       window.addEventListener('resize', schedule);
-      window.addEventListener('orientationchange', function () { setTimeout(fit, 300); });
+      window.addEventListener('orientationchange', function () { setTimeout(fit, 350); });
       document.addEventListener('DOMContentLoaded', function () {
         fit();
         try {
-          new MutationObserver(schedule).observe(document.documentElement, { childList: true, subtree: true });
+          new MutationObserver(schedule).observe(document.documentElement, { childList: true, subtree: true, attributes: true });
         } catch (e) {}
       });
     })();
